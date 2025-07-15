@@ -1546,35 +1546,46 @@ class WC_Facebook_Product {
 	 * @return string|array String for UI display, array for API if pipe-separated
 	 */
 	public function get_fb_size( $is_api_call = false ) {
-		// Use generic attribute finder
-		$size_values = $this->get_attribute_by_type( 'size' );
-
-		if ( $size_values ) {
-			return $this->process_attribute_values( $size_values, $is_api_call );
-		}
-
-		// Get size directly from post meta as fallback
-		$fb_size = get_post_meta(
-			$this->id,
-			self::FB_SIZE,
-			true
-		);
-
-		// If empty and this is a variation, get the parent size
-		if ( empty( $fb_size ) && $this->is_type( 'variation' ) ) {
-			$parent_id = $this->get_parent_id();
-			if ( $parent_id ) {
-				$fb_size = get_post_meta( $parent_id, self::FB_SIZE, true );
+			// Check cache first
+			$cache_key = 'size_' . ($is_api_call ? 'api' : 'ui');
+			if (isset($this->attribute_cache[$cache_key])) {
+					return $this->attribute_cache[$cache_key];
 			}
-		}
 
-		// Extract first value from array or object
-		$fb_size = $this->get_first_value_from_complex_type( $fb_size );
+			// Use generic attribute finder
+			$size_values = $this->get_attribute_by_type( 'size' );
 
-		$clean_value = mb_substr( WC_Facebookcommerce_Utils::clean_string( $fb_size ), 0, 200 );
-		return $this->convert_pipe_separated_values( $clean_value, $is_api_call );
+			if ( $size_values ) {
+					$result = $this->process_attribute_values( $size_values, $is_api_call );
+					$this->attribute_cache[$cache_key] = $result;
+					return $result;
+			}
+
+			// Get size directly from post meta as fallback
+			$fb_size = get_post_meta(
+					$this->id,
+					self::FB_SIZE,
+					true
+			);
+
+			// If empty and this is a variation, get the parent size
+			if ( empty( $fb_size ) && $this->is_type( 'variation' ) ) {
+					$parent_id = $this->get_parent_id();
+					if ( $parent_id ) {
+							$fb_size = get_post_meta( $parent_id, self::FB_SIZE, true );
+					}
+			}
+
+			// Extract first value from array or object
+			$fb_size = $this->get_first_value_from_complex_type( $fb_size );
+
+			$clean_value = mb_substr( WC_Facebookcommerce_Utils::clean_string( $fb_size ), 0, 200 );
+			$result = $this->convert_pipe_separated_values( $clean_value, $is_api_call );
+
+			// Cache the result
+			$this->attribute_cache[$cache_key] = $result;
+			return $result;
 	}
-
 	/**
 	 * Gets the FB pattern value for the product.
 	 *
