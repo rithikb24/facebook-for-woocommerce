@@ -211,6 +211,11 @@ class WC_Facebook_Product {
 	}
 
 	/**
+	 * @var array Cache for expensive attribute lookups
+	 */
+	private $attribute_cache = [];
+
+	/**
 	 * Get all attributes that are not mapped to standard Facebook fields
 	 *
 	 * @return array Array of unmapped attributes with 'name' and 'value' keys
@@ -1488,38 +1493,50 @@ class WC_Facebook_Product {
 	 * @return string|array String for UI display, array for API if pipe-separated
 	 */
 	public function get_fb_color( $is_api_call = false ) {
-		// Use generic attribute finder - try both color and colour
-		$color_values = $this->get_attribute_by_type( 'color' );
-
-		// Try British spelling if US spelling fails
-		if ( ! $color_values ) {
-			$color_values = $this->get_attribute_by_type( 'colour' );
-		}
-
-		if ( $color_values ) {
-			return $this->process_attribute_values( $color_values, $is_api_call );
-		}
-
-		// Get color directly from post meta as fallback
-		$fb_color = get_post_meta(
-			$this->id,
-			self::FB_COLOR,
-			true
-		);
-
-		// If empty and this is a variation, get the parent color
-		if ( empty( $fb_color ) && $this->is_type( 'variation' ) ) {
-			$parent_id = $this->get_parent_id();
-			if ( $parent_id ) {
-				$fb_color = get_post_meta( $parent_id, self::FB_COLOR, true );
+			// Check cache first
+			$cache_key = 'color_' . ($is_api_call ? 'api' : 'ui');
+			if (isset($this->attribute_cache[$cache_key])) {
+					return $this->attribute_cache[$cache_key];
 			}
-		}
 
-		// Extract first value from array or object
-		$fb_color = $this->get_first_value_from_complex_type( $fb_color );
+			// Use generic attribute finder - try both color and colour
+			$color_values = $this->get_attribute_by_type( 'color' );
 
-		$clean_value = mb_substr( WC_Facebookcommerce_Utils::clean_string( $fb_color ), 0, 200 );
-		return $this->convert_pipe_separated_values( $clean_value, $is_api_call );
+			// Try British spelling if US spelling fails
+			if ( ! $color_values ) {
+					$color_values = $this->get_attribute_by_type( 'colour' );
+			}
+
+			if ( $color_values ) {
+					$result = $this->process_attribute_values( $color_values, $is_api_call );
+					$this->attribute_cache[$cache_key] = $result;
+					return $result;
+			}
+
+			// Get color directly from post meta as fallback
+			$fb_color = get_post_meta(
+					$this->id,
+					self::FB_COLOR,
+					true
+			);
+
+			// If empty and this is a variation, get the parent color
+			if ( empty( $fb_color ) && $this->is_type( 'variation' ) ) {
+					$parent_id = $this->get_parent_id();
+					if ( $parent_id ) {
+							$fb_color = get_post_meta( $parent_id, self::FB_COLOR, true );
+					}
+			}
+
+			// Extract first value from array or object
+			$fb_color = $this->get_first_value_from_complex_type( $fb_color );
+
+			$clean_value = mb_substr( WC_Facebookcommerce_Utils::clean_string( $fb_color ), 0, 200 );
+			$result = $this->convert_pipe_separated_values( $clean_value, $is_api_call );
+
+			// Cache the result
+			$this->attribute_cache[$cache_key] = $result;
+			return $result;
 	}
 
 	/**
