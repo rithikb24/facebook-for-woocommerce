@@ -84,6 +84,9 @@ class AJAX {
 
 		// get supported languages for whatsapp templates
 		add_action( 'wp_ajax_wc_facebook_whatsapp_fetch_supported_languages', array( $this, 'whatsapp_fetch_supported_languages' ) );
+
+		// sync all products via AJAX (all, not just modified)
+		add_action( 'wp_ajax_wc_facebook_sync_modified_products', array( $this, 'sync_modified_products' ) );
 	}
 
 
@@ -500,6 +503,24 @@ class AJAX {
 			wp_send_json_error( 'Missing request parameters for Event Configs POST API call' );
 		}
 		WhatsAppUtilityConnection::post_whatsapp_utility_messages_event_configs_call( $event, $integration_config_id, $language, $status, $bisu_token );
+	}
+
+	/**
+	 * Syncs all products via AJAX (all, not just modified).
+	 *
+	 * @internal
+	 *
+	 * @since 3.6.0
+	 */
+	public function sync_modified_products() {
+		// Use a separate nonce for this action
+		check_admin_referer( 'wc_facebook_sync_modified_products', 'nonce' );
+		try {
+			facebook_for_woocommerce()->get_products_sync_handler()->create_or_update_modified_products();
+			wp_send_json_success();
+		} catch ( \Exception $exception ) {
+			wp_send_json_error( $exception->getMessage() );
+		}
 	}
 
 	/**

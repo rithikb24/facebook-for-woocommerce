@@ -75,6 +75,28 @@ class Sync {
 		$profiling_logger = facebook_for_woocommerce()->get_profiling_logger();
 		$profiling_logger->start( 'create_or_update_all_products' );
 
+		// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
+		$this->create_or_update_products( \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync() );
+
+		$profiling_logger->stop( 'create_or_update_all_products' );
+	}
+
+		// Queue up filtered IDs for sync
+		$this->create_or_update_products( $products_to_sync );
+
+		$profiling_logger->stop( 'create_or_update_all_products' );
+	}
+
+
+	/**
+	 * Adds all eligible product IDs to the requests array to be created or updated, regardless of modification time.
+	 *
+	 * @since 3.6.0
+	 */
+	public function create_or_update_modified_products() {
+		$profiling_logger = facebook_for_woocommerce()->get_profiling_logger();
+		$profiling_logger->start( 'create_or_update_all_products' );
+
 		// Get all product IDs that are eligible for sync
 		$all_product_ids = \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync();
 
@@ -100,6 +122,7 @@ class Sync {
 
 		$profiling_logger->stop( 'create_or_update_all_products' );
 	}
+
 
 
 	/**

@@ -90,6 +90,7 @@ class Product_Sync extends Abstract_Settings_Screen {
 				'ajax_url'                        => admin_url( 'admin-ajax.php' ),
 				'set_excluded_terms_prompt_nonce' => wp_create_nonce( 'set-excluded-terms-prompt' ),
 				'sync_products_nonce'             => wp_create_nonce( self::ACTION_SYNC_PRODUCTS ),
+				'sync_all_products_nonce'         => wp_create_nonce( 'wc_facebook_sync_all_products' ),
 				'sync_status_nonce'               => wp_create_nonce( self::ACTION_GET_SYNC_STATUS ),
 				'sync_in_progress'                => Sync::is_sync_in_progress(),
 				'excluded_category_ids'           => facebook_for_woocommerce()->get_integration()->get_excluded_product_category_ids(),
@@ -97,6 +98,7 @@ class Product_Sync extends Abstract_Settings_Screen {
 				'i18n'                            => array(
 					'confirm_resync'                => esc_html__( 'Your products will now be resynced to Facebook, this may take some time.', 'facebook-for-woocommerce' ),
 					'confirm_sync'                  => esc_html__( "Facebook for WooCommerce automatically syncs your products on create/update. Are you sure you want to force product resync?\n\nThis will query all published products and may take some time. You only need to do this if your products are out of sync or some of your products did not sync.", 'facebook-for-woocommerce' ),
+					'confirm_sync_all'              => esc_html__( 'Are you sure you want to sync ALL products to Facebook? This may take a long time for large catalogs.', 'facebook-for-woocommerce' ),
 					/* translators: Placeholders %s - html code for a spinner icon */
 					'sync_in_progress'              => sprintf( esc_html__( 'Your products are syncing - you may safely leave this page %s', 'facebook-for-woocommerce' ), '<span class="spinner is-active"></span>' ),
 					'sync_remaining_items_singular' => sprintf( esc_html( translate_nooped_plural( $sync_remaining_items_string, 1 ) ), '<strong>', '</strong>', '<span class="spinner is-active"></span>' ),
@@ -175,22 +177,24 @@ class Product_Sync extends Abstract_Settings_Screen {
 	public function render_title( $field ) {
 		?>
 		<h2>
-
 			<?php esc_html_e( 'Product sync', 'facebook-for-woocommerce' ); ?>
-
 			<?php if ( facebook_for_woocommerce()->get_connection_handler()->is_connected() ) : ?>
+				<a
+					id="woocommerce-facebook-settings-sync-modified-products"
+					class="button product-sync-field"
+					href="#"
+					style="vertical-align: middle; margin-left: 20px;"
+				><?php esc_html_e( 'Sync modified products', 'facebook-for-woocommerce' ); ?></a>
 				<a
 					id="woocommerce-facebook-settings-sync-products"
 					class="button product-sync-field"
 					href="#"
-					style="vertical-align: middle; margin-left: 20px;"
-				><?php esc_html_e( 'Sync products', 'facebook-for-woocommerce' ); ?></a>
+					style="vertical-align: middle; margin-left: 10px;"
+				><?php esc_html_e( 'Sync all products', 'facebook-for-woocommerce' ); ?></a>
 			<?php endif; ?>
-
 		</h2>
 		<div><p id="sync_progress" style="display: none"></p></div>
 		<table class="form-table">
-
 		<?php
 	}
 
