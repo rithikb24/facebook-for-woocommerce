@@ -63,6 +63,7 @@ class Sync {
 	 * Adds all eligible product IDs to the requests array to be created or updated.
 	 *
 	 * Uses the same logic that the feed handler uses to get a list of product IDs to sync.
+	 * Processes products in batches of 1000 to avoid memory issues with large catalogs.
 	 *
 	 * TODO: consolidate the logic to decide whether a product should be synced in one or a couple of helper methods - right now we have slightly different versions of the same code in different places {WV 2020-05-25}
 	 *
@@ -75,8 +76,23 @@ class Sync {
 		$profiling_logger = facebook_for_woocommerce()->get_profiling_logger();
 		$profiling_logger->start( 'create_or_update_all_products' );
 
-		// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
-		$this->create_or_update_products( \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync() );
+		// Get all product IDs eligible for sync
+		$all_product_ids = \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync();
+
+		// Process products in batches of 1000
+		$batch_size = 1000;
+		$batches = array_chunk($all_product_ids, $batch_size);
+
+		foreach ($batches as $batch) {
+			// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
+			$this->create_or_update_products($batch);
+
+			// Schedule the sync for this batch
+			$this->schedule_sync();
+
+			// Clear the requests array for the next batch
+			$this->requests = array();
+		}
 
 		$profiling_logger->stop( 'create_or_update_all_products' );
 	}
@@ -85,6 +101,7 @@ class Sync {
 	 * Adds all eligible product IDs to the requests array to be created or updated.
 	 *
 	 * Uses the same logic that the feed handler uses to get a list of product IDs to sync.
+	 * Processes products in batches of 1000 to avoid memory issues with large catalogs.
 	 *
 	 * TODO: consolidate the logic to decide whether a product should be synced in one or a couple of helper methods - right now we have slightly different versions of the same code in different places {WV 2020-05-25}
 	 *
@@ -117,8 +134,20 @@ class Sync {
 			}
 		}
 
-		// Queue up filtered IDs for sync
-		$this->create_or_update_products( $products_to_sync );
+		// Process products in batches of 1000
+		$batch_size = 1000;
+		$batches = array_chunk($products_to_sync, $batch_size);
+
+		foreach ($batches as $batch) {
+			// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
+			$this->create_or_update_products($batch);
+
+			// Schedule the sync for this batch
+			$this->schedule_sync();
+
+			// Clear the requests array for the next batch
+			$this->requests = array();
+		}
 
 		$profiling_logger->stop( 'create_or_update_all_products' );
 	}
