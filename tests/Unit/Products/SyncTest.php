@@ -42,7 +42,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
         parent::setUp();
 
         // Create a mock for the profiling logger
-        $profiling_logger = $this->createMock(\WooCommerce\Facebook\Logger\ProfilingLogger::class);
+        $profiling_logger = $this->createMock(\WooCommerce\Facebook\Debug\ProfilingLogger::class);
         $profiling_logger->method('start')->willReturn(null);
         $profiling_logger->method('stop')->willReturn(null);
 
@@ -126,7 +126,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
         // Mock facebook_for_woocommerce()
         global $facebook_for_woocommerce;
         $facebook_for_woocommerce = $this->createMock(\WC_Facebookcommerce::class);
-        $profiling_logger = $this->createMock(\WooCommerce\Facebook\Logger\ProfilingLogger::class);
+        $profiling_logger = $this->createMock(\WooCommerce\Facebook\Debug\ProfilingLogger::class);
         $profiling_logger->method('start')->willReturn(null);
         $profiling_logger->method('stop')->willReturn(null);
         $facebook_for_woocommerce->method('get_profiling_logger')->willReturn($profiling_logger);
