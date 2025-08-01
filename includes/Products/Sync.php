@@ -62,10 +62,8 @@ class Sync {
 	/**
 	 * Adds all eligible product IDs to the requests array to be created or updated.
 	 *
-	 * Uses the same logic that the feed handler uses to get a list of product IDs to sync.
-	 * Processes products in batches of 1000 to avoid memory issues with large catalogs.
-	 *
-	 * TODO: consolidate the logic to decide whether a product should be synced in one or a couple of helper methods - right now we have slightly different versions of the same code in different places {WV 2020-05-25}
+	 * Uses cursor-based pagination to efficiently process large catalogs without
+	 * loading all product IDs into memory at once.
 	 *
 	 * @see \WC_Facebook_Product_Feed::get_product_ids()
 	 * @see \WC_Facebook_Product_Feed::write_product_feed_file()
@@ -76,34 +74,106 @@ class Sync {
 		$profiling_logger = facebook_for_woocommerce()->get_profiling_logger();
 		$profiling_logger->start( 'create_or_update_all_products' );
 
-		// Get all product IDs eligible for sync
-		$all_product_ids = \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync();
+		// Set batch size
+		$batch_size = 500;
 
-		// Process products in batches of 1000
-		$batch_size = 1000;
-		$batches = array_chunk($all_product_ids, $batch_size);
+		// Start with cursor at 0 (beginning)
+		$last_id = 0;
 
-		foreach ($batches as $batch) {
-			// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
-			$this->create_or_update_products($batch);
+		// Track total processed for logging
+		$total_processed = 0;
+
+		// Process products in batches using cursor-based pagination
+		do {
+			// Get next batch of products using cursor-based pagination
+			$product_ids = $this->get_next_product_batch($last_id, $batch_size);
+
+			// If no more products, we're done
+			if (empty($product_ids)) {
+				break;
+			}
+
+			// Update the cursor to the highest ID in this batch
+			$last_id = max($product_ids);
+
+			// Queue up these IDs for sync
+			$this->create_or_update_products($product_ids);
 
 			// Schedule the sync for this batch
 			$this->schedule_sync();
 
 			// Clear the requests array for the next batch
 			$this->requests = array();
-		}
+
+			// Update total processed count
+			$total_processed += count($product_ids);
+
+			// Log progress
+			facebook_for_woocommerce()->log(
+				sprintf('Processed batch of %d products. Total processed: %d', count($product_ids), $total_processed)
+			);
+
+		} while (!empty($product_ids));
 
 		$profiling_logger->stop( 'create_or_update_all_products' );
 	}
 
 	/**
+	 * Gets the next batch of product IDs using cursor-based pagination.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $last_id The last product ID processed (cursor)
+	 * @param int $batch_size The number of products to retrieve
+	 * @return array Array of product IDs
+	 */
+	protected function get_next_product_batch($last_id, $batch_size) {
+		global $wpdb;
+
+		// Get published products with ID greater than last_id
+		$query = $wpdb->prepare(
+			"SELECT ID FROM {$wpdb->posts}
+			WHERE post_type IN ('product', 'product_variation')
+			AND post_status = 'publish'
+			AND ID > %d
+			ORDER BY ID ASC
+			LIMIT %d",
+			$last_id,
+			$batch_size
+		);
+
+		$results = $wpdb->get_col($query);
+
+		if (empty($results)) {
+			return array();
+		}
+
+		// Filter to only include products that should be synced
+		$product_ids = array();
+		foreach ($results as $product_id) {
+			$product = wc_get_product($product_id);
+
+			if ($product) {
+				// Skip parent variable products as they can't be synced directly
+				if ($product->is_type('variable')) {
+					continue;
+				}
+
+				// Only include products that should be synced
+				if (\WooCommerce\Facebook\Products::product_should_be_synced($product)) {
+					$product_ids[] = (int) $product_id;
+				}
+			}
+		}
+
+		return $product_ids;
+	}
+
+	/**
 	 * Adds all eligible product IDs to the requests array to be created or updated.
 	 *
-	 * Uses the same logic that the feed handler uses to get a list of product IDs to sync.
-	 * Processes products in batches of 1000 to avoid memory issues with large catalogs.
-	 *
-	 * TODO: consolidate the logic to decide whether a product should be synced in one or a couple of helper methods - right now we have slightly different versions of the same code in different places {WV 2020-05-25}
+	 * Uses cursor-based pagination to efficiently process modified products without
+	 * loading all product IDs into memory at once.
 	 *
 	 * @see \WC_Facebook_Product_Feed::get_product_ids()
 	 * @see \WC_Facebook_Product_Feed::write_product_feed_file()
@@ -112,44 +182,105 @@ class Sync {
 	 */
 	public function create_or_update_modified_products() {
 		$profiling_logger = facebook_for_woocommerce()->get_profiling_logger();
-		$profiling_logger->start( 'create_or_update_all_products' );
+		$profiling_logger->start( 'create_or_update_modified_products' );
 
-		// Get all product IDs that are eligible for sync
-		$all_product_ids = \WC_Facebookcommerce_Utils::get_all_product_ids_for_sync();
+		// Set batch size
+		$batch_size = 200;
 
-		// Filter to only get products modified since last sync
-		$products_to_sync = array();
-		foreach ( $all_product_ids as $product_id ) {
-			$product = wc_get_product( $product_id );
-			if ( ! $product ) {
-				continue;
+		// Start with cursor at 0 (beginning)
+		$last_id = 0;
+
+		// Track total processed for logging
+		$total_processed = 0;
+
+		// Process products in batches using cursor-based pagination
+		do {
+			// Get next batch of modified products using cursor-based pagination
+			$product_ids = $this->get_next_modified_product_batch($last_id, $batch_size);
+
+			// If no more products, we're done
+			if (empty($product_ids)) {
+				break;
 			}
 
-			$last_sync_time = get_post_meta( $product_id, '_fb_sync_last_time', true );
-			$modified_time = $product->get_date_modified() ? $product->get_date_modified()->getTimestamp() : 0;
+			// Update the cursor to the highest ID in this batch
+			$last_id = max($product_ids);
 
-			// If never synced or modified since last sync, add to sync queue
-			if ( ! $last_sync_time || $modified_time > $last_sync_time ) {
-				$products_to_sync[] = $product_id;
-			}
-		}
-
-		// Process products in batches of 1000
-		$batch_size = 1000;
-		$batches = array_chunk($products_to_sync, $batch_size);
-
-		foreach ($batches as $batch) {
-			// Queue up these IDs for sync. they will only be included in the final requests if they should be synced.
-			$this->create_or_update_products($batch);
+			// Queue up these IDs for sync
+			$this->create_or_update_products($product_ids);
 
 			// Schedule the sync for this batch
 			$this->schedule_sync();
 
 			// Clear the requests array for the next batch
 			$this->requests = array();
+
+			// Update total processed count
+			$total_processed += count($product_ids);
+
+			// Log progress
+			facebook_for_woocommerce()->log(
+				sprintf('Processed batch of %d modified products. Total processed: %d', count($product_ids), $total_processed)
+			);
+
+		} while (!empty($product_ids));
+
+		$profiling_logger->stop( 'create_or_update_modified_products' );
+	}
+
+	/**
+	 * Gets the next batch of modified product IDs using cursor-based pagination.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $last_id The last product ID processed (cursor)
+	 * @param int $batch_size The number of products to retrieve
+	 * @return array Array of product IDs
+	 */
+	protected function get_next_modified_product_batch($last_id, $batch_size) {
+		global $wpdb;
+
+		// Get published products with ID greater than last_id
+		$query = $wpdb->prepare(
+			"SELECT ID FROM {$wpdb->posts}
+			WHERE post_type IN ('product', 'product_variation')
+			AND post_status = 'publish'
+			AND ID > %d
+			ORDER BY ID ASC
+			LIMIT %d",
+			$last_id,
+			$batch_size
+		);
+
+		$results = $wpdb->get_col($query);
+
+		if (empty($results)) {
+			return array();
 		}
 
-		$profiling_logger->stop( 'create_or_update_all_products' );
+		// Filter to only include modified products that should be synced
+		$product_ids = array();
+		foreach ($results as $product_id) {
+			$product = wc_get_product($product_id);
+
+			if ($product) {
+				// Skip parent variable products as they can't be synced directly
+				if ($product->is_type('variable')) {
+					continue;
+				}
+
+				$last_sync_time = get_post_meta($product_id, '_fb_sync_last_time', true);
+				$modified_time = $product->get_date_modified() ? $product->get_date_modified()->getTimestamp() : 0;
+
+				// If never synced or modified since last sync, add to sync queue
+				if ((!$last_sync_time || $modified_time > $last_sync_time) &&
+					\WooCommerce\Facebook\Products::product_should_be_synced($product)) {
+					$product_ids[] = (int) $product_id;
+				}
+			}
+		}
+
+		return $product_ids;
 	}
 
 	/**
