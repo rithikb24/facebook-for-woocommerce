@@ -7,11 +7,11 @@ use WooCommerce\Facebook\AJAX;
 use WooCommerce\Facebook\Tests\AbstractWPUnitTestWithOptionIsolationAndSafeFiltering;
 
 /**
- * Unit tests for AJAX class - focused on sync_modified_products() method.
+ * Unit tests for AJAX class - focused on sync_modified_products() core logic.
  *
  * @since 2.0.0
  */
-class AJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
+class SyncModifyAJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 
 	/**
 	 * The AJAX instance under test.
@@ -29,160 +29,255 @@ class AJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 	}
 
 	/**
-	 * Test that the class exists and can be instantiated.
+	 * Test that nonce verification is enforced.
 	 */
-	public function test_class_exists() {
-		$this->assertTrue( class_exists( AJAX::class ) );
-		$this->assertInstanceOf( AJAX::class, $this->ajax );
+	public function test_sync_modified_products_requires_valid_nonce() {
+		$this->mock_facebook_for_woocommerce_with_successful_sync();
+		$this->mock_check_admin_referer_failure();
+		$this->mock_wp_send_json_error();
+
+		$this->ajax->sync_modified_products();
+
+		// Should fail due to nonce verification
+		$this->assertTrue( $GLOBALS['wp_send_json_error_called'] );
 	}
 
 	/**
-	 * Test that sync_modified_products method exists.
+	 * Test successful sync execution.
 	 */
-	public function test_sync_modified_products_method_exists() {
-		$this->assertTrue( method_exists( $this->ajax, 'sync_modified_products' ) );
+	public function test_sync_modified_products_success() {
+		$this->mock_facebook_for_woocommerce_with_successful_sync();
+		$this->mock_check_admin_referer_success();
+		$this->mock_wp_send_json_success();
+
+		$this->ajax->sync_modified_products();
+
+		$this->assertTrue( $GLOBALS['wp_send_json_success_called'] );
+		$this->assertTrue( $GLOBALS['sync_handler_called'] );
 	}
 
 	/**
-	 * Test that sync_modified_products method can be called without fatal errors.
+	 * Test exception handling during sync.
 	 */
-	public function test_sync_modified_products_can_be_called() {
-		// Test that the method can be called without fatal errors
-		// We expect it to handle the case where dependencies are not available gracefully
-		try {
-			$this->ajax->sync_modified_products();
-			$this->assertTrue( true ); // If we get here, no fatal error occurred
-		} catch ( \Exception $e ) {
-			// Method should handle exceptions gracefully or throw expected exceptions
-			$this->assertTrue( true );
-		}
+	public function test_sync_modified_products_handles_exceptions() {
+		$this->mock_facebook_for_woocommerce_with_sync_exception();
+		$this->mock_check_admin_referer_success();
+		$this->mock_wp_send_json_error();
+
+		$this->ajax->sync_modified_products();
+
+		$this->assertTrue( $GLOBALS['wp_send_json_error_called'] );
+		$this->assertEquals( 'Test sync exception', $GLOBALS['wp_send_json_error_data'] );
 	}
 
 	/**
-	 * Test that constants are defined correctly.
+	 * Test that logging occurs during successful sync.
 	 */
-	public function test_constants() {
-		$this->assertEquals( 'wc_facebook_search_product_attributes', AJAX::ACTION_SEARCH_PRODUCT_ATTRIBUTES );
+	public function test_sync_modified_products_logs_events() {
+		$this->mock_facebook_for_woocommerce_with_successful_sync();
+		$this->mock_check_admin_referer_success();
+		$this->mock_wp_send_json_success();
+		$this->mock_logger();
+
+		$this->ajax->sync_modified_products();
+
+		$logs = $GLOBALS['logger_logs'] ?? array();
+		$this->assertCount( 2, $logs );
+		$this->assertEquals( 'Starting AJAX sync of modified products', $logs[0]['message'] );
+		$this->assertEquals( 'Completed AJAX sync of modified products', $logs[1]['message'] );
 	}
 
 	/**
-	 * Helper method to mock facebook_for_woocommerce integration.
+	 * Test that error logging occurs during exceptions.
 	 */
-	private function mock_facebook_for_woocommerce_integration() {
-		// Mock the global function
-		if ( ! function_exists( 'facebook_for_woocommerce' ) ) {
-			function facebook_for_woocommerce() {
-				return $GLOBALS['mock_facebook_for_woocommerce'] ?? null;
-			}
-		}
+	public function test_sync_modified_products_logs_errors() {
+		$this->mock_facebook_for_woocommerce_with_sync_exception();
+		$this->mock_check_admin_referer_success();
+		$this->mock_wp_send_json_error();
+		$this->mock_logger();
 
-		// Create mock integration
-		$mock_integration = $this->createMock( \stdClass::class );
+		$this->ajax->sync_modified_products();
 
-		// Create mock main class
+		$logs = $GLOBALS['logger_logs'] ?? array();
+		$this->assertCount( 2, $logs );
+		$this->assertEquals( 'Starting AJAX sync of modified products', $logs[0]['message'] );
+		$this->assertEquals( 'Error syncing modified products via AJAX', $logs[1]['message'] );
+		$this->assertEquals( 'Test sync exception', $logs[1]['context']['error_message'] );
+	}
+
+	/**
+	 * Test that sync handler is not called when nonce fails.
+	 */
+	public function test_sync_modified_products_skips_handler_when_nonce_fails() {
+		$this->mock_facebook_for_woocommerce_with_successful_sync();
+		$this->mock_check_admin_referer_failure();
+		$this->mock_wp_send_json_error();
+
+		$this->ajax->sync_modified_products();
+
+		$this->assertFalse( $GLOBALS['sync_handler_called'] ?? false );
+	}
+
+	/**
+	 * Test integration availability check.
+	 */
+	public function test_sync_modified_products_handles_missing_integration() {
+		$this->mock_facebook_for_woocommerce_with_missing_integration();
+		$this->mock_wp_send_json_error();
+
+		$this->ajax->sync_modified_products();
+
+		$this->assertTrue( $GLOBALS['wp_send_json_error_called'] );
+	}
+
+	/**
+	 * Helper method to mock facebook_for_woocommerce with successful sync.
+	 */
+	private function mock_facebook_for_woocommerce_with_successful_sync() {
+		$this->mock_facebook_for_woocommerce_function();
+
+		$mock_sync_handler = $this->createMock( \stdClass::class );
+		$mock_sync_handler->method( 'create_or_update_modified_products' )->willReturnCallback( function() {
+			$GLOBALS['sync_handler_called'] = true;
+		} );
+
 		$mock_main = $this->createMock( \stdClass::class );
-		$mock_main->method( 'get_integration' )->willReturn( $mock_integration );
+		$mock_main->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
 
 		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
 	}
 
 	/**
-	 * Helper method to mock nonce verification.
-	 *
-	 * @param bool $should_pass Whether nonce verification should pass.
+	 * Helper method to mock facebook_for_woocommerce with sync exception.
 	 */
-	private function mock_nonce_verification( bool $should_pass ) {
-		// Mock check_admin_referer function
-		if ( ! function_exists( 'check_admin_referer' ) ) {
-			function check_admin_referer( $action = -1, $query_arg = '_wpnonce' ) {
-				return $GLOBALS['mock_nonce_verification'] ?? true;
-			}
-		}
+	private function mock_facebook_for_woocommerce_with_sync_exception() {
+		$this->mock_facebook_for_woocommerce_function();
 
-		$GLOBALS['mock_nonce_verification'] = $should_pass;
-
-		if ( ! $should_pass ) {
-			// Mock wp_die function for nonce failure
-			if ( ! function_exists( 'wp_die' ) ) {
-				function wp_die( $message = '', $title = '', $args = array() ) {
-					throw new \Exception( 'Nonce verification failed' );
-				}
-			}
-		}
-	}
-
-	/**
-	 * Helper method to mock products sync handler.
-	 */
-	private function mock_products_sync_handler() {
-		// Mock the sync handler
-		$mock_sync_handler = $this->createMock( \stdClass::class );
-		$mock_sync_handler->method( 'create_or_update_modified_products' )->willReturn( true );
-
-		// Update the mock main class to return the sync handler
-		if ( isset( $GLOBALS['mock_facebook_for_woocommerce'] ) ) {
-			$GLOBALS['mock_facebook_for_woocommerce']->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
-		}
-	}
-
-	/**
-	 * Helper method to mock products sync handler that throws exception.
-	 */
-	private function mock_products_sync_handler_with_exception() {
-		// Mock the sync handler to throw exception
 		$mock_sync_handler = $this->createMock( \stdClass::class );
 		$mock_sync_handler->method( 'create_or_update_modified_products' )
 			->willThrowException( new \Exception( 'Test sync exception' ) );
 
-		// Update the mock main class to return the sync handler
-		if ( isset( $GLOBALS['mock_facebook_for_woocommerce'] ) ) {
-			$GLOBALS['mock_facebook_for_woocommerce']->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
+		$mock_main = $this->createMock( \stdClass::class );
+		$mock_main->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
+
+		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
+	}
+
+	/**
+	 * Helper method to mock facebook_for_woocommerce with missing integration.
+	 */
+	private function mock_facebook_for_woocommerce_with_missing_integration() {
+		$this->mock_facebook_for_woocommerce_function();
+
+		$mock_main = $this->createMock( \stdClass::class );
+		$mock_main->method( 'get_products_sync_handler' )->willReturn( null );
+
+		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
+	}
+
+	/**
+	 * Helper method to mock the facebook_for_woocommerce function.
+	 */
+	private function mock_facebook_for_woocommerce_function() {
+		if ( ! function_exists( 'facebook_for_woocommerce' ) ) {
+			function facebook_for_woocommerce() {
+				return $GLOBALS['mock_facebook_for_woocommerce'] ?? null;
+			}
+		}
+	}
+
+	/**
+	 * Helper method to mock successful nonce verification.
+	 */
+	private function mock_check_admin_referer_success() {
+		if ( ! function_exists( 'check_admin_referer' ) ) {
+			function check_admin_referer( $action = -1, $query_arg = '_wpnonce' ) {
+				return true;
+			}
+		}
+	}
+
+	/**
+	 * Helper method to mock failed nonce verification.
+	 */
+	private function mock_check_admin_referer_failure() {
+		if ( ! function_exists( 'check_admin_referer' ) ) {
+			function check_admin_referer( $action = -1, $query_arg = '_wpnonce' ) {
+				throw new \Exception( 'Nonce verification failed' );
+			}
+		}
+	}
+
+	/**
+	 * Helper method to mock wp_send_json_success.
+	 */
+	private function mock_wp_send_json_success() {
+		if ( ! function_exists( 'wp_send_json_success' ) ) {
+			function wp_send_json_success( $data = null, $status_code = null, $options = 0 ) {
+				$GLOBALS['wp_send_json_success_called'] = true;
+				$GLOBALS['wp_send_json_success_data'] = $data;
+			}
 		}
 	}
 
 	/**
 	 * Helper method to mock wp_send_json_error.
-	 *
-	 * @param mixed &$response Reference to capture the response.
 	 */
-	private function mock_wp_send_json_error( &$response ) {
+	private function mock_wp_send_json_error() {
 		if ( ! function_exists( 'wp_send_json_error' ) ) {
 			function wp_send_json_error( $data = null, $status_code = null, $options = 0 ) {
-				$GLOBALS['mock_json_error_response'] = $data;
+				$GLOBALS['wp_send_json_error_called'] = true;
+				$GLOBALS['wp_send_json_error_data'] = $data;
 			}
 		}
-
-		// Use a reference to capture the response
-		$this->add_filter_with_safe_teardown( 'wp_send_json_error_capture', function() use ( &$response ) {
-			$response = $GLOBALS['mock_json_error_response'] ?? null;
-		});
-
-		// Trigger the filter after the function call
-		add_action( 'shutdown', function() {
-			do_action( 'wp_send_json_error_capture' );
-		}, 1 );
 	}
 
 	/**
-	 * Helper method to mock wp_send_json_success.
-	 *
-	 * @param bool &$called Reference to track if function was called.
+	 * Helper method to mock the Logger.
 	 */
-	private function mock_wp_send_json_success( &$called ) {
-		if ( ! function_exists( 'wp_send_json_success' ) ) {
-			function wp_send_json_success( $data = null, $status_code = null, $options = 0 ) {
-				$GLOBALS['mock_json_success_called'] = true;
-			}
+	private function mock_logger() {
+		if ( ! class_exists( '\WooCommerce\Facebook\Framework\Logger' ) ) {
+			eval( '
+				namespace WooCommerce\Facebook\Framework;
+				class Logger {
+					public static function log( $message, $context = array(), $options = array(), $exception = null ) {
+						$GLOBALS["logger_logs"][] = array(
+							"message" => $message,
+							"context" => $context,
+							"options" => $options,
+							"exception" => $exception
+						);
+					}
+				}
+			' );
 		}
 
-		// Use a reference to capture the call
-		$this->add_filter_with_safe_teardown( 'wp_send_json_success_capture', function() use ( &$called ) {
-			$called = $GLOBALS['mock_json_success_called'] ?? false;
-		});
+		$GLOBALS['logger_logs'] = array();
+	}
 
-		// Trigger the filter after the function call
-		add_action( 'shutdown', function() {
-			do_action( 'wp_send_json_success_capture' );
-		}, 1 );
+	/**
+	 * Helper method to mock WordPress translation function.
+	 */
+	private function mock_wordpress_functions() {
+		if ( ! function_exists( '__' ) ) {
+			function __( $text, $domain = 'default' ) {
+				return $text;
+			}
+		}
+	}
+
+	/**
+	 * Clean up globals after each test.
+	 */
+	public function tearDown(): void {
+		unset( $GLOBALS['mock_facebook_for_woocommerce'] );
+		unset( $GLOBALS['wp_send_json_success_called'] );
+		unset( $GLOBALS['wp_send_json_success_data'] );
+		unset( $GLOBALS['wp_send_json_error_called'] );
+		unset( $GLOBALS['wp_send_json_error_data'] );
+		unset( $GLOBALS['sync_handler_called'] );
+		unset( $GLOBALS['logger_logs'] );
+
+		parent::tearDown();
 	}
 }
