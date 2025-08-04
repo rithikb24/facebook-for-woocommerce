@@ -10,6 +10,8 @@ use WooCommerce\Facebook\Tests\AbstractWPUnitTestWithOptionIsolationAndSafeFilte
  * Unit tests for Products\Sync class - focused on create_or_update_modified_products() core logic.
  *
  * @since 2.0.0
+ * @runInSeparateProcess
+ * @preserveGlobalState disabled
  */
 class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 
@@ -25,6 +27,10 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 	 */
 	public function setUp(): void {
 		parent::setUp();
+
+		// Mock the Logger class first
+		$this->mock_logger();
+
 		$this->sync = new Sync();
 	}
 
@@ -37,6 +43,9 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 
 		// Mock WC_Facebookcommerce_Utils::get_all_product_ids_for_sync()
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+
+		// Mock WordPress functions
+		$this->mock_wordpress_functions();
 
 		// Mock products with no last sync time (never synced)
 		$this->mock_products_with_sync_data( array(
@@ -63,6 +72,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		$product_ids = array( 1, 2, 3 );
 
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+		$this->mock_wordpress_functions();
 
 		// Mock products where modified time > last sync time
 		$this->mock_products_with_sync_data( array(
@@ -88,6 +98,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		$product_ids = array( 1, 2 );
 
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+		$this->mock_wordpress_functions();
 
 		// Mock products where modified time <= last sync time
 		$this->mock_products_with_sync_data( array(
@@ -109,6 +120,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		$product_ids = array( 1, 2 );
 
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+		$this->mock_wordpress_functions();
 
 		// Mock products with no modification date (should default to 0)
 		$this->mock_products_with_sync_data( array(
@@ -132,6 +144,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		$product_ids = array( 1, 999, 2 );
 
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+		$this->mock_wordpress_functions();
 
 		// Mock valid products and one invalid
 		$this->mock_products_with_sync_data( array(
@@ -156,6 +169,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 	public function test_create_or_update_modified_products_handles_exceptions() {
 		// Mock get_all_product_ids_for_sync to throw exception
 		$this->mock_get_all_product_ids_for_sync_with_exception();
+		$this->mock_wordpress_functions();
 
 		// Method should not throw exception
 		$this->sync->create_or_update_modified_products();
@@ -172,6 +186,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		$product_ids = array( 1, 2 );
 
 		$this->mock_get_all_product_ids_for_sync( $product_ids );
+		$this->mock_wordpress_functions();
 
 		$this->mock_products_with_sync_data( array(
 			1 => array( 'last_sync_time' => 0, 'modified_time' => 0 ),
@@ -200,14 +215,11 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 	 * Helper method to mock WC_Facebookcommerce_Utils::get_all_product_ids_for_sync().
 	 */
 	private function mock_get_all_product_ids_for_sync( array $product_ids ) {
-		// Mock the static method call
-		$GLOBALS['mock_get_all_product_ids_for_sync'] = $product_ids;
-
 		if ( ! class_exists( '\WC_Facebookcommerce_Utils' ) ) {
 			eval( '
 				class WC_Facebookcommerce_Utils {
 					public static function get_all_product_ids_for_sync() {
-						return $GLOBALS["mock_get_all_product_ids_for_sync"] ?? array();
+						return ' . var_export( $product_ids, true ) . ';
 					}
 				}
 			' );
@@ -233,29 +245,45 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 	 * Helper method to mock products and their sync data.
 	 */
 	private function mock_products_with_sync_data( array $products_data ) {
+		// Store products data for access in functions
+		$GLOBALS['test_products_data'] = $products_data;
+
 		// Mock wc_get_product function
 		if ( ! function_exists( 'wc_get_product' ) ) {
 			function wc_get_product( $product_id ) {
-				$products_data = $GLOBALS['mock_products_data'] ?? array();
+				$products_data = $GLOBALS['test_products_data'] ?? array();
 
 				if ( ! isset( $products_data[ $product_id ] ) || $products_data[ $product_id ] === null ) {
 					return false;
 				}
 
 				$data = $products_data[ $product_id ];
-				$mock_product = new \stdClass();
 
-				// Mock get_date_modified method
-				$mock_product->get_date_modified = function() use ( $data ) {
-					if ( $data['modified_time'] === null ) {
-						return null;
+				// Create a proper mock product object
+				$mock_product = new class( $data ) {
+					private $data;
+
+					public function __construct( $data ) {
+						$this->data = $data;
 					}
 
-					$mock_date = new \stdClass();
-					$mock_date->getTimestamp = function() use ( $data ) {
-						return $data['modified_time'];
-					};
-					return $mock_date;
+					public function get_date_modified() {
+						if ( $this->data['modified_time'] === null ) {
+							return null;
+						}
+
+						return new class( $this->data['modified_time'] ) {
+							private $timestamp;
+
+							public function __construct( $timestamp ) {
+								$this->timestamp = $timestamp;
+							}
+
+							public function getTimestamp() {
+								return $this->timestamp;
+							}
+						};
+					}
 				};
 
 				return $mock_product;
@@ -265,7 +293,7 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 		// Mock get_post_meta function
 		if ( ! function_exists( 'get_post_meta' ) ) {
 			function get_post_meta( $post_id, $key = '', $single = false ) {
-				$products_data = $GLOBALS['mock_products_data'] ?? array();
+				$products_data = $GLOBALS['test_products_data'] ?? array();
 
 				if ( $key === '_fb_sync_last_time' && isset( $products_data[ $post_id ] ) ) {
 					return $products_data[ $post_id ]['last_sync_time'];
@@ -274,7 +302,48 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 				return '';
 			}
 		}
+	}
 
-		$GLOBALS['mock_products_data'] = $products_data;
+	/**
+	 * Helper method to mock WordPress functions.
+	 */
+	private function mock_wordpress_functions() {
+		// Mock facebook_for_woocommerce function
+		if ( ! function_exists( 'facebook_for_woocommerce' ) ) {
+			function facebook_for_woocommerce() {
+				return new class() {
+					public function get_profiling_logger() {
+						return new class() {
+							public function start( $name ) {}
+							public function stop( $name ) {}
+						};
+					}
+				};
+			}
+		}
+	}
+
+	/**
+	 * Helper method to mock the Logger class.
+	 */
+	private function mock_logger() {
+		if ( ! class_exists( '\WooCommerce\Facebook\Framework\Logger' ) ) {
+			eval( '
+				namespace WooCommerce\Facebook\Framework;
+				class Logger {
+					public static function log( $message, $context = array(), $options = array(), $exception = null ) {
+						// Do nothing in tests
+					}
+				}
+			' );
+		}
+	}
+
+	/**
+	 * Clean up globals after each test.
+	 */
+	public function tearDown(): void {
+		unset( $GLOBALS['test_products_data'] );
+		parent::tearDown();
 	}
 }
