@@ -196,9 +196,10 @@ class SyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 
 		$this->sync->create_or_update_modified_products_test();
 
-		// Product 2 should be synced (modified time > 0)
+		// Both products should be synced (! $last_sync_time is true when last_sync_time = 0)
 		$requests = $this->get_sync_requests();
-		$this->assertCount( 1, $requests );
+		$this->assertCount( 2, $requests );
+		$this->assertEquals( Sync::ACTION_UPDATE, $requests['p-1'] );
 		$this->assertEquals( Sync::ACTION_UPDATE, $requests['p-2'] );
 	}
 

@@ -136,13 +136,24 @@ class SyncModifyAJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFil
 	private function mock_facebook_for_woocommerce_with_successful_sync() {
 		$this->mock_facebook_for_woocommerce_function();
 
-		$mock_sync_handler = $this->createMock( \stdClass::class );
-		$mock_sync_handler->method( 'create_or_update_modified_products' )->willReturnCallback( function() {
-			$GLOBALS['sync_handler_called'] = true;
-		} );
+		// Create anonymous class with the required method
+		$mock_sync_handler = new class() {
+			public function create_or_update_modified_products() {
+				$GLOBALS['sync_handler_called'] = true;
+			}
+		};
 
-		$mock_main = $this->createMock( \stdClass::class );
-		$mock_main->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
+		$mock_main = new class( $mock_sync_handler ) {
+			private $sync_handler;
+
+			public function __construct( $sync_handler ) {
+				$this->sync_handler = $sync_handler;
+			}
+
+			public function get_products_sync_handler() {
+				return $this->sync_handler;
+			}
+		};
 
 		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
 	}
@@ -153,12 +164,24 @@ class SyncModifyAJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFil
 	private function mock_facebook_for_woocommerce_with_sync_exception() {
 		$this->mock_facebook_for_woocommerce_function();
 
-		$mock_sync_handler = $this->createMock( \stdClass::class );
-		$mock_sync_handler->method( 'create_or_update_modified_products' )
-			->willThrowException( new \Exception( 'Test sync exception' ) );
+		// Create anonymous class with the required method that throws exception
+		$mock_sync_handler = new class() {
+			public function create_or_update_modified_products() {
+				throw new \Exception( 'Test sync exception' );
+			}
+		};
 
-		$mock_main = $this->createMock( \stdClass::class );
-		$mock_main->method( 'get_products_sync_handler' )->willReturn( $mock_sync_handler );
+		$mock_main = new class( $mock_sync_handler ) {
+			private $sync_handler;
+
+			public function __construct( $sync_handler ) {
+				$this->sync_handler = $sync_handler;
+			}
+
+			public function get_products_sync_handler() {
+				return $this->sync_handler;
+			}
+		};
 
 		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
 	}
@@ -169,8 +192,11 @@ class SyncModifyAJAXTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFil
 	private function mock_facebook_for_woocommerce_with_missing_integration() {
 		$this->mock_facebook_for_woocommerce_function();
 
-		$mock_main = $this->createMock( \stdClass::class );
-		$mock_main->method( 'get_products_sync_handler' )->willReturn( null );
+		$mock_main = new class() {
+			public function get_products_sync_handler() {
+				return null;
+			}
+		};
 
 		$GLOBALS['mock_facebook_for_woocommerce'] = $mock_main;
 	}
