@@ -44,9 +44,6 @@ class AJAX {
 		// sync all products via AJAX
 		add_action( 'wp_ajax_wc_facebook_sync_products', array( $this, 'sync_products' ) );
 
-		// sync all modified products via AJAX
-		add_action( 'wp_ajax_wc_facebook_sync_modified_products', array( $this, 'sync_modified_products' ) );
-
 		// sync all coupons via AJAX
 		add_action( 'wp_ajax_wc_facebook_sync_coupons', array( $this, 'sync_coupons' ) );
 
@@ -76,6 +73,59 @@ class AJAX {
 
 		// action to create or update utility event config info
 		add_action( 'wp_ajax_wc_facebook_whatsapp_upsert_event_config', array( $this, 'whatsapp_upsert_event_config' ) );
+
+		// search a product's attributes for the given term
+		add_action( 'wp_ajax_' . self::ACTION_SEARCH_PRODUCT_ATTRIBUTES, array( $this, 'admin_search_product_attributes' ) );
+
+		// update the wp_options with wc_facebook_whatsapp_consent_collection_setting_status to disabled
+		add_action( 'wp_ajax_wc_facebook_whatsapp_consent_collection_disable', array( $this, 'whatsapp_consent_collection_disable' ) );
+
+		// disconnect whatsapp account from woocommcerce app
+		add_action( 'wp_ajax_wc_facebook_disconnect_whatsapp', array( $this, 'wc_facebook_disconnect_whatsapp' ) );
+
+		// get supported languages for whatsapp templates
+		add_action( 'wp_ajax_wc_facebook_whatsapp_fetch_supported_languages', array( $this, 'whatsapp_fetch_supported_languages' ) );
+	}
+
+
+	/**
+	 * Searches a product's attributes for the given term.
+	 *
+	 * @internal
+	 *
+	 * @since 2.1.0
+	 *
+	 * @throws PluginException If the nonce is invalid or a search term is not provided.
+	 */
+	public function admin_search_product_attributes() {
+		try {
+			if ( ! wp_verify_nonce( Helper::get_requested_value( 'security' ), self::ACTION_SEARCH_PRODUCT_ATTRIBUTES ) ) {
+				throw new PluginException( 'Invalid nonce' );
+			}
+
+			$term = Helper::get_requested_value( 'term' );
+			if ( ! $term ) {
+				throw new PluginException( 'A search term is required' );
+			}
+
+			$product = wc_get_product( (int) Helper::get_requested_value( 'request_data' ) );
+			if ( ! $product instanceof \WC_Product ) {
+				throw new PluginException( 'A valid product ID is required' );
+			}
+
+			$attributes = Admin\Products::get_available_product_attribute_names( $product );
+			// filter out any attributes whose slug or proper name don't at least partially match the search term
+			$results = array_filter(
+				$attributes,
+				function ( $name, $slug ) use ( $term ) {
+					return false !== stripos( $name, $term ) || false !== stripos( $slug, $term );
+				},
+				ARRAY_FILTER_USE_BOTH
+			);
+			wp_send_json( $results );
+		} catch ( PluginException $exception ) {
+			die();
+		}
 	}
 
 	/**
@@ -163,62 +213,6 @@ class AJAX {
 		}
 	}
 
-	/**
-	 * Syncs all modified products via AJAX.
-	 *
-	 * @internal
-	 *
-	 * @since 2.0.0
-	 */
-	public function sync_modified_products() {
-		Logger::log(
-			'Starting AJAX sync of modified products',
-			[
-				'event' => 'ajax_product_sync_modified_products_start',
-			]
-		);
-
-		// Allow opt-out of full batch-API sync, for example if store has a large number of products.
-		if ( ! facebook_for_woocommerce()->get_integration()->allow_full_batch_api_sync() ) {
-			Logger::log(
-				'Full product sync disabled by filter',
-				[
-					'event' => 'ajax_product_sync_modified_products_disabled',
-				]
-			);
-			wp_send_json_error( __( 'Full product sync disabled by filter.', 'facebook-for-woocommerce' ) );
-			return;
-		}
-
-		try {
-			check_admin_referer( Product_Sync::ACTION_SYNC_MODIFIED_PRODUCTS, 'nonce' );
-
-			facebook_for_woocommerce()->get_products_sync_handler()->create_or_update_modified_products();
-
-			Logger::log(
-				'Completed AJAX sync of modified products',
-				[
-					'event' => 'ajax_product_sync_modified_products_complete',
-				]
-			);
-
-			wp_send_json_success();
-		} catch ( \Exception $exception ) {
-			Logger::log(
-				'Error syncing modified products via AJAX',
-				[
-					'event' => 'ajax_product_sync_modified_products_error',
-					'error_message' => $exception->getMessage(),
-				],
-				[
-					'should_save_log_in_woocommerce' => true,
-					'woocommerce_log_level' => \WC_Log_Levels::ERROR,
-				],
-				$exception
-			);
-			wp_send_json_error( $exception->getMessage() );
-		}
-	}
 
 	/**
 	 * Syncs all coupons via AJAX.
