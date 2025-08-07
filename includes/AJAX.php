@@ -76,87 +76,95 @@ class AJAX {
 
 		// action to create or update utility event config info
 		add_action( 'wp_ajax_wc_facebook_whatsapp_upsert_event_config', array( $this, 'whatsapp_upsert_event_config' ) );
-
-		// search a product's attributes for the given term
-		add_action( 'wp_ajax_' . self::ACTION_SEARCH_PRODUCT_ATTRIBUTES, array( $this, 'admin_search_product_attributes' ) );
-
-		// update the wp_options with wc_facebook_whatsapp_consent_collection_setting_status to disabled
-		add_action( 'wp_ajax_wc_facebook_whatsapp_consent_collection_disable', array( $this, 'whatsapp_consent_collection_disable' ) );
-
-		// disconnect whatsapp account from woocommcerce app
-		add_action( 'wp_ajax_wc_facebook_disconnect_whatsapp', array( $this, 'wc_facebook_disconnect_whatsapp' ) );
-
-		// get supported languages for whatsapp templates
-		add_action( 'wp_ajax_wc_facebook_whatsapp_fetch_supported_languages', array( $this, 'whatsapp_fetch_supported_languages' ) );
-	}
-
-
-	/**
-	 * Searches a product's attributes for the given term.
-	 *
-	 * @internal
-	 *
-	 * @since 2.1.0
-	 *
-	 * @throws PluginException If the nonce is invalid or a search term is not provided.
-	 */
-	public function admin_search_product_attributes() {
-		try {
-			if ( ! wp_verify_nonce( Helper::get_requested_value( 'security' ), self::ACTION_SEARCH_PRODUCT_ATTRIBUTES ) ) {
-				throw new PluginException( 'Invalid nonce' );
-			}
-
-			$term = Helper::get_requested_value( 'term' );
-			if ( ! $term ) {
-				throw new PluginException( 'A search term is required' );
-			}
-
-			$product = wc_get_product( (int) Helper::get_requested_value( 'request_data' ) );
-			if ( ! $product instanceof \WC_Product ) {
-				throw new PluginException( 'A valid product ID is required' );
-			}
-
-			$attributes = Admin\Products::get_available_product_attribute_names( $product );
-			// filter out any attributes whose slug or proper name don't at least partially match the search term
-			$results = array_filter(
-				$attributes,
-				function ( $name, $slug ) use ( $term ) {
-					return false !== stripos( $name, $term ) || false !== stripos( $slug, $term );
-				},
-				ARRAY_FILTER_USE_BOTH
-			);
-			wp_send_json( $results );
-		} catch ( PluginException $exception ) {
-			die();
-		}
 	}
 
 	/**
-	 * Syncs all products via AJAX.
+	 * Syncs all products via AJAX (modified products first, then all products).
 	 *
 	 * @internal
 	 *
 	 * @since 2.0.0
 	 */
 	public function sync_products() {
+		Logger::log(
+			'Starting product sync (modified first, then all)',
+			[
+				'event' => 'ajax_product_sync_start',
+			]
+		);
+
 		// Allow opt-out of full batch-API sync, for example if store has a large number of products.
 		if ( ! facebook_for_woocommerce()->get_integration()->allow_full_batch_api_sync() ) {
+			Logger::log(
+				'Product sync disabled by filter',
+				[
+					'event' => 'ajax_product_sync_disabled',
+				]
+			);
 			wp_send_json_error( __( 'Full product sync disabled by filter.', 'facebook-for-woocommerce' ) );
 			return;
 		}
 
-		check_admin_referer( Product_Sync::ACTION_SYNC_PRODUCTS, 'nonce' );
-
 		try {
-			facebook_for_woocommerce()->get_products_sync_handler()->create_or_update_all_products();
+			check_admin_referer( Product_Sync::ACTION_SYNC_PRODUCTS, 'nonce' );
+
+			// Step 1: Queue modified products for sync
+			Logger::log(
+				'Step 1: Queuing modified products for sync',
+				[
+					'event' => 'ajax_product_sync_step1_start',
+				]
+			);
+
+			$sync_handler = facebook_for_woocommerce()->get_products_sync_handler();
+			$sync_handler->create_or_update_modified_products();
+
+			Logger::log(
+				'Step 1: Modified products queued for sync',
+				[
+					'event' => 'ajax_product_sync_step1_queued',
+				]
+			);
+
+			// Step 2: Queue all products for sync
+			Logger::log(
+				'Step 2: Queuing all products for sync',
+				[
+					'event' => 'ajax_product_sync_step2_start',
+				]
+			);
+
+			// Create a new sync handler instance to avoid request array conflicts
+			$sync_handler_all = new \WooCommerce\Facebook\Products\Sync();
+			$sync_handler_all->create_or_update_all_products();
+
+			Logger::log(
+				'Completed product sync queuing',
+				[
+					'event' => 'ajax_product_sync_complete',
+				]
+			);
+
 			wp_send_json_success();
 		} catch ( \Exception $exception ) {
+			Logger::log(
+				'Error during product sync',
+				[
+					'event' => 'ajax_product_sync_error',
+					'error_message' => $exception->getMessage(),
+				],
+				[
+					'should_save_log_in_woocommerce' => true,
+					'woocommerce_log_level' => \WC_Log_Levels::ERROR,
+				],
+				$exception
+			);
 			wp_send_json_error( $exception->getMessage() );
 		}
 	}
 
 	/**
-	 * Syncs all products via AJAX.
+	 * Syncs all modified products via AJAX.
 	 *
 	 * @internal
 	 *
