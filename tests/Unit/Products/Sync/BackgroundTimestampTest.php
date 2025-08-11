@@ -169,6 +169,256 @@ class BackgroundTimestampTest extends AbstractWPUnitTestWithOptionIsolationAndSa
 	}
 
 	/**
+	 * Test that timestamps are updated only for valid product IDs extracted from retailer_id.
+	 *
+	 * This test focuses specifically on the regex pattern matching and product ID validation
+	 * in the timestamp update logic.
+	 */
+	public function test_timestamp_update_with_valid_product_id_extraction() {
+		// Arrange: Set up test data with various retailer_id formats
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_789' ), // Valid format
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify timestamp was updated for the extracted product ID (789)
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertCount( 1, $updated_timestamps );
+		$this->assertArrayHasKey( 789, $updated_timestamps );
+		$this->assertIsInt( $updated_timestamps[789] );
+		$this->assertGreaterThan( 0, $updated_timestamps[789] );
+	}
+
+	/**
+	 * Test that timestamps are NOT updated for invalid retailer_id formats.
+	 *
+	 * This test verifies that the regex pattern '/wc_post_id_(\d+)/' correctly
+	 * rejects invalid formats and prevents timestamp updates.
+	 */
+	public function test_timestamp_not_updated_for_invalid_retailer_id_formats() {
+		// Arrange: Set up test data with invalid retailer_id formats
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+			'p-456' => Sync::ACTION_UPDATE,
+			'p-789' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'invalid_format_123' ), // Invalid format
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_abc' ), // Non-numeric ID
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_' ), // Missing ID
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1', 'handle2', 'handle3' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify no timestamps were updated due to invalid formats
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertEmpty( $updated_timestamps );
+	}
+
+	/**
+	 * Test that timestamps are NOT updated for zero or negative product IDs.
+	 *
+	 * This test verifies the product ID validation logic that checks if product_id > 0.
+	 */
+	public function test_timestamp_not_updated_for_zero_or_negative_product_ids() {
+		// Arrange: Set up test data with zero and negative product IDs
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+			'p-456' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_0' ), // Zero ID
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_-5' ), // Negative ID (though regex won't match)
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1', 'handle2' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify no timestamps were updated
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertEmpty( $updated_timestamps );
+	}
+
+	/**
+	 * Test that timestamps are NOT updated when request data is missing 'id' field.
+	 *
+	 * This test verifies the isset() and !empty() checks for request['data']['id'].
+	 */
+	public function test_timestamp_not_updated_when_id_field_missing() {
+		// Arrange: Set up test data with missing or empty ID fields
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+			'p-456' => Sync::ACTION_UPDATE,
+			'p-789' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array(), // Missing 'id' field
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => '' ), // Empty 'id' field
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => null ), // Null 'id' field
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1', 'handle2', 'handle3' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify no timestamps were updated
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertEmpty( $updated_timestamps );
+	}
+
+	/**
+	 * Test that timestamps are updated for mixed valid and invalid requests.
+	 *
+	 * This test verifies that the logic correctly processes each request independently
+	 * and only updates timestamps for valid UPDATE requests.
+	 */
+	public function test_timestamp_update_mixed_valid_invalid_requests() {
+		// Arrange: Set up test data with mixed request types and formats
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+			'p-456' => Sync::ACTION_DELETE,
+			'p-789' => Sync::ACTION_UPDATE,
+			'p-101' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_123' ), // Valid UPDATE
+			),
+			array(
+				'method' => Sync::ACTION_DELETE,
+				'data' => array( 'id' => 'wc_post_id_456' ), // DELETE - should not update timestamp
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'invalid_format_789' ), // Invalid format
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_101' ), // Valid UPDATE
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1', 'handle2', 'handle3', 'handle4' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify timestamps were updated only for valid UPDATE requests (123 and 101)
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertCount( 2, $updated_timestamps );
+		$this->assertArrayHasKey( 123, $updated_timestamps );
+		$this->assertArrayHasKey( 101, $updated_timestamps );
+		$this->assertArrayNotHasKey( 456, $updated_timestamps ); // DELETE request
+		$this->assertArrayNotHasKey( 789, $updated_timestamps ); // Invalid format
+	}
+
+	/**
+	 * Test the regex pattern matching edge cases.
+	 *
+	 * This test specifically focuses on the regex pattern '/wc_post_id_(\d+)/'
+	 * and various edge cases it should handle.
+	 */
+	public function test_regex_pattern_edge_cases() {
+		// Arrange: Set up test data with various edge case retailer_id formats
+		$test_data = array(
+			'p-123' => Sync::ACTION_UPDATE,
+			'p-456' => Sync::ACTION_UPDATE,
+			'p-789' => Sync::ACTION_UPDATE,
+			'p-101' => Sync::ACTION_UPDATE,
+		);
+
+		$mock_requests = array(
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_123456789' ), // Large number - should work
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_1' ), // Single digit - should work
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'WC_POST_ID_789' ), // Wrong case - should not match
+			),
+			array(
+				'method' => Sync::ACTION_UPDATE,
+				'data' => array( 'id' => 'wc_post_id_101_extra' ), // Extra text after - should still match 101
+			),
+		);
+
+		// Configure background to return successful API response
+		$this->background->set_api_response_handles( array( 'handle1', 'handle2', 'handle3', 'handle4' ) );
+		$this->background->set_mock_requests( $mock_requests );
+
+		// Act: Process the items
+		$this->background->process_items( $this->mock_job, $test_data );
+
+		// Assert: Verify timestamps were updated for valid patterns only
+		$updated_timestamps = $this->background->get_updated_timestamps();
+		$this->assertCount( 3, $updated_timestamps );
+		$this->assertArrayHasKey( 123456789, $updated_timestamps ); // Large number
+		$this->assertArrayHasKey( 1, $updated_timestamps ); // Single digit
+		$this->assertArrayHasKey( 101, $updated_timestamps ); // With extra text
+		$this->assertArrayNotHasKey( 789, $updated_timestamps ); // Wrong case
+	}
+
+	/**
 	 * Helper method to mock WordPress functions.
 	 */
 	private function mock_wordpress_functions() {
