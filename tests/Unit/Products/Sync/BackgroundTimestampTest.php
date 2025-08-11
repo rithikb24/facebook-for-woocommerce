@@ -217,6 +217,52 @@ class BackgroundTimestampTest extends AbstractWPUnitTestWithOptionIsolationAndSa
 				}
 			' );
 		}
+
+		// Mock facebook_for_woocommerce function to return mock plugin instance
+		if ( ! function_exists( 'facebook_for_woocommerce' ) ) {
+			function facebook_for_woocommerce() {
+				global $test_api_response_handles;
+
+				$mock_response = new \stdClass();
+				$mock_response->handles = isset( $test_api_response_handles ) ? $test_api_response_handles : array();
+
+				$mock_api = new class( $mock_response ) {
+					private $response;
+					public function __construct( $response ) {
+						$this->response = $response;
+					}
+					public function send_item_updates( $catalog_id, $requests ) {
+						return $this->response;
+					}
+				};
+
+				$mock_integration = new class {
+					public function get_product_catalog_id() {
+						return 'test-catalog-123';
+					}
+				};
+
+				$mock_plugin = new class( $mock_api, $mock_integration ) {
+					private $api;
+					private $integration;
+					public function __construct( $api, $integration ) {
+						$this->api = $api;
+						$this->integration = $integration;
+					}
+					public function get_api() {
+						return $this->api;
+					}
+					public function get_integration() {
+						return $this->integration;
+					}
+					public function log( $message ) {
+						// Mock logging - do nothing
+					}
+				};
+
+				return $mock_plugin;
+			}
+		}
 	}
 
 	/**
@@ -231,8 +277,9 @@ class BackgroundTimestampTest extends AbstractWPUnitTestWithOptionIsolationAndSa
 }
 
 /**
- * Testable version of Background class that only mocks the minimal dependencies needed.
- * This uses the REAL process_items method to ensure we test actual behavior.
+ * Testable version of Background class that uses the REAL process_items method.
+ * We only override process_item to control the requests and update_job to prevent DB writes.
+ * The API calls are mocked at the WordPress function level.
  */
 class TestableBackground extends Background {
 
@@ -255,6 +302,9 @@ class TestableBackground extends Background {
 	 */
 	public function set_api_response_handles( array $handles ) {
 		$this->api_response_handles = $handles;
+		// Also set the global variable that the mock API will use
+		global $test_api_response_handles;
+		$test_api_response_handles = $handles;
 	}
 
 	/**
@@ -300,7 +350,7 @@ class TestableBackground extends Background {
 
 	/**
 	 * Override process_item to return mock requests.
-	 * This is the minimal override needed to control the data flow.
+	 * This allows us to control what requests are generated.
 	 */
 	public function process_item( $item, $job ) {
 		static $request_index = 0;
@@ -310,14 +360,6 @@ class TestableBackground extends Background {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Override send_item_updates to return mock handles.
-	 * This prevents actual API calls while testing the timestamp logic.
-	 */
-	private function send_item_updates( array $requests ): array {
-		return $this->api_response_handles;
 	}
 
 	/**
