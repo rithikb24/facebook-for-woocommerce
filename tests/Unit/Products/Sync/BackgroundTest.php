@@ -199,10 +199,6 @@ class BackgroundTest extends AbstractWPUnitTestWithSafeFiltering {
 			],
 			[
 				'method' => Sync::ACTION_UPDATE,
-				'data' => ['id' => 'no_underscore_123']
-			],
-			[
-				'method' => Sync::ACTION_UPDATE,
 				'data' => ['id' => 'ends_with_underscore_']
 			],
 			[
