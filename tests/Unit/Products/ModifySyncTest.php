@@ -43,8 +43,9 @@ class ModifySyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFilteri
 		// Mock the Logger class
 		$this->mock_logger();
 
-		// Mock WordPress functions
+		// Mock WordPress functions and classes
 		$this->mock_wordpress_functions();
+		$this->mock_wc_facebookcommerce_utils();
 
 		$this->sync = new TestableSync();
 		$this->mock_products = array();
@@ -290,6 +291,39 @@ class ModifySyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFilteri
 	}
 
 	/**
+	 * Helper method to mock WC_Facebookcommerce_Utils class.
+	 */
+	private function mock_wc_facebookcommerce_utils() {
+		if ( ! class_exists( '\WC_Facebookcommerce_Utils' ) ) {
+			eval( '
+				class WC_Facebookcommerce_Utils {
+					public static function get_all_product_ids_for_sync() {
+						$test_instance = $GLOBALS["test_instance"] ?? null;
+						if ( $test_instance && isset( $test_instance->mock_product_ids ) ) {
+							return $test_instance->mock_product_ids;
+						}
+						return array();
+					}
+				}
+			' );
+		}
+	}
+
+	/**
+	 * Set mock product IDs for the test.
+	 */
+	public function set_mock_product_ids( array $product_ids ) {
+		$this->mock_product_ids = $product_ids;
+	}
+
+	/**
+	 * Mock product IDs to return from WC_Facebookcommerce_Utils.
+	 *
+	 * @var array
+	 */
+	private $mock_product_ids = array();
+
+	/**
 	 * Clean up globals after each test.
 	 */
 	public function tearDown(): void {
@@ -337,38 +371,19 @@ class MockDateTime {
 class TestableSync extends Sync {
 
 	/**
-	 * Mock product IDs to return.
-	 *
-	 * @var array
-	 */
-	private $mock_product_ids = array();
-
-	/**
-	 * Set mock product IDs.
-	 */
-	public function set_mock_product_ids( array $product_ids ) {
-		$this->mock_product_ids = $product_ids;
-
-		// Mock the WC_Facebookcommerce_Utils::get_all_product_ids_for_sync method
-		if ( ! class_exists( '\WC_Facebookcommerce_Utils' ) ) {
-			eval( '
-				class WC_Facebookcommerce_Utils {
-					public static function get_all_product_ids_for_sync() {
-						$test_instance = $GLOBALS["test_instance"] ?? null;
-						if ( $test_instance && $test_instance->sync ) {
-							return $test_instance->sync->mock_product_ids;
-						}
-						return array();
-					}
-				}
-			' );
-		}
-	}
-
-	/**
 	 * Get the requests array for testing.
 	 */
 	public function get_requests(): array {
 		return $this->requests;
+	}
+
+	/**
+	 * Set mock product IDs for the test.
+	 */
+	public function set_mock_product_ids( array $product_ids ) {
+		$test_instance = $GLOBALS['test_instance'] ?? null;
+		if ( $test_instance ) {
+			$test_instance->mock_product_ids = $product_ids;
+		}
 	}
 }
