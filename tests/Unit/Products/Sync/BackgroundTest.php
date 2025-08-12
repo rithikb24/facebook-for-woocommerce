@@ -148,8 +148,8 @@ class BackgroundTest extends AbstractWPUnitTestWithSafeFiltering {
 		$fixed_time = 1640995200;
 		$this->background->set_mock_time( $fixed_time );
 
-		// Test various retailer ID formats
-		$requests = [
+		// Test valid retailer ID formats that should match /_(\d+)$/
+		$valid_requests = [
 			[
 				'method' => Sync::ACTION_UPDATE,
 				'data' => ['id' => 'wc_post_id_123']
@@ -165,23 +165,15 @@ class BackgroundTest extends AbstractWPUnitTestWithSafeFiltering {
 			[
 				'method' => Sync::ACTION_UPDATE,
 				'data' => ['id' => 'complex_format_with_multiple_underscores_999']
-			],
-			[
-				'method' => Sync::ACTION_UPDATE,
-				'data' => ['id' => 'invalid_format_no_digits_at_end_abc']
-			],
-			[
-				'method' => Sync::ACTION_UPDATE,
-				'data' => ['id' => 'no_underscore_123']
 			]
 		];
 
 		$handles = ['handle1'];
 
 		// Execute the timestamp update logic
-		$this->background->test_timestamp_update_logic( $requests, $handles );
+		$this->background->test_timestamp_update_logic( $valid_requests, $handles );
 
-		// Verify that only valid formats were processed
+		// Verify that all valid formats were processed
 		$meta_updates = $this->background->get_meta_updates();
 		$this->assertCount( 4, $meta_updates );
 
@@ -190,6 +182,43 @@ class BackgroundTest extends AbstractWPUnitTestWithSafeFiltering {
 		$this->assertContains( 456, $product_ids );
 		$this->assertContains( 789, $product_ids );
 		$this->assertContains( 999, $product_ids );
+	}
+
+	/**
+	 * Test that invalid retailer ID formats are not processed.
+	 */
+	public function test_invalid_retailer_id_formats_ignored() {
+		$fixed_time = 1640995200;
+		$this->background->set_mock_time( $fixed_time );
+
+		// Test invalid retailer ID formats that should NOT match /_(\d+)$/
+		$invalid_requests = [
+			[
+				'method' => Sync::ACTION_UPDATE,
+				'data' => ['id' => 'invalid_format_no_digits_at_end_abc']
+			],
+			[
+				'method' => Sync::ACTION_UPDATE,
+				'data' => ['id' => 'no_underscore_123']
+			],
+			[
+				'method' => Sync::ACTION_UPDATE,
+				'data' => ['id' => 'ends_with_underscore_']
+			],
+			[
+				'method' => Sync::ACTION_UPDATE,
+				'data' => ['id' => 'mixed_123_abc']
+			]
+		];
+
+		$handles = ['handle1'];
+
+		// Execute the timestamp update logic
+		$this->background->test_timestamp_update_logic( $invalid_requests, $handles );
+
+		// Verify that no invalid formats were processed
+		$meta_updates = $this->background->get_meta_updates();
+		$this->assertEmpty( $meta_updates, 'No meta updates should occur for invalid retailer ID formats' );
 	}
 
 	/**
