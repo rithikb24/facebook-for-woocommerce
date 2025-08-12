@@ -35,6 +35,13 @@ class ModifySyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFilteri
 	private $mock_post_meta = array();
 
 	/**
+	 * Mock product IDs to return from WC_Facebookcommerce_Utils.
+	 *
+	 * @var array
+	 */
+	public $mock_product_ids = array();
+
+	/**
 	 * Set up before each test.
 	 */
 	public function setUp(): void {
@@ -315,13 +322,6 @@ class ModifySyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFilteri
 	public function set_mock_product_ids( array $product_ids ) {
 		$this->mock_product_ids = $product_ids;
 	}
-
-	/**
-	 * Mock product IDs to return from WC_Facebookcommerce_Utils.
-	 *
-	 * @var array
-	 */
-	private $mock_product_ids = array();
 
 	/**
 	 * Clean up globals after each test.
