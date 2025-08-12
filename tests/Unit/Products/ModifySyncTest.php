@@ -14,7 +14,7 @@ use WooCommerce\Facebook\Tests\AbstractWPUnitTestWithOptionIsolationAndSafeFilte
 class ModifySyncTest extends AbstractWPUnitTestWithOptionIsolationAndSafeFiltering {
 
 	/**
-	 * The testable Sync instance under test.
+	 * The testable Sync instance under test
 	 *
 	 * @var TestableSync
 	 */
