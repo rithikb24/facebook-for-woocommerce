@@ -348,14 +348,16 @@ class TestableBackground extends Background {
 	public function test_update_sync_timestamps( array $requests, array $handles ) {
 		$this->reset_meta_updates();
 
-		// Set up WordPress function mocks
+		// Set up WordPress function mocks and time() function mock
 		$this->setup_wp_function_mocks();
+		$this->setup_time_mock();
 
 		// Call the actual method from the parent class
 		$this->update_sync_timestamps( $requests, $handles );
 
 		// Clean up mocks
 		$this->cleanup_wp_function_mocks();
+		$this->cleanup_time_mock();
 	}
 
 	/**
@@ -374,6 +376,31 @@ class TestableBackground extends Background {
 	}
 
 	/**
+	 * Set up time() function mock for testing.
+	 */
+	private function setup_time_mock() {
+		if ( $this->mock_time !== null ) {
+			// Create a temporary function to override time() in the current namespace
+			$mock_time = $this->mock_time;
+			eval( "
+				namespace WooCommerce\\Facebook\\Products\\Sync;
+				function time() {
+					return $mock_time;
+				}
+			" );
+		}
+	}
+
+	/**
+	 * Clean up time() function mock.
+	 */
+	private function cleanup_time_mock() {
+		// Note: In a real test environment, you might want to use a more sophisticated
+		// mocking framework like Mockery or PHPUnit's built-in mocking capabilities
+		// to properly restore the original time() function.
+	}
+
+	/**
 	 * Filter to mock update_post_meta calls.
 	 */
 	public function mock_update_post_meta_filter( $check, $object_id, $meta_key, $meta_value, $prev_value ) {
@@ -386,12 +413,5 @@ class TestableBackground extends Background {
 			return true; // Prevent actual update
 		}
 		return $check; // Allow other meta updates to proceed normally
-	}
-
-	/**
-	 * Override get_current_timestamp to use mock time in tests.
-	 */
-	protected function get_current_timestamp(): int {
-		return $this->mock_time ?? parent::get_current_timestamp();
 	}
 }

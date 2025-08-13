@@ -137,7 +137,22 @@ class Background extends BackgroundJobHandler {
 				$this->update_job( $job );
 
 				// Update timestamps after successful API call - only if we got handles back
-				$this->update_sync_timestamps( $requests, $handles );
+				try {
+					$this->update_sync_timestamps( $requests, $handles );
+				} catch ( \Exception $e ) {
+					Logger::log(
+						'Error updating product sync timestamps in background sync',
+						[
+							'event' => 'background_sync_timestamp_update_error',
+							'error_message' => $e->getMessage(),
+						],
+						[
+							'should_save_log_in_woocommerce' => true,
+							'woocommerce_log_level' => \WC_Log_Levels::ERROR,
+						],
+						$e
+					);
+				}
 			} catch ( ApiException $e ) {
 				/* translators: Placeholders: %1$s - <string  job ID, %2$s - <strong> error message */
 				$message = sprintf( __( 'There was an error trying sync products using the Catalog Batch API for job %1$s: %2$s', 'facebook-for-woocommerce' ), $job->id, $e->getMessage() );
@@ -270,7 +285,10 @@ class Background extends BackgroundJobHandler {
 	protected function update_sync_timestamps( array $requests, array $handles ) {
 		if ( ! empty( $handles ) ) {
 			try {
-				$current_time = $this->get_current_timestamp();
+				$current_time = time();
+				$product_ids = [];
+
+				// Collect all product IDs that need timestamp updates
 				foreach ( $requests as $request ) {
 					if ( Sync::ACTION_UPDATE === $request['method'] && isset( $request['data']['id'] ) && ! empty( $request['data']['id'] ) ) {
 						// Extract product ID from retailer ID by taking digits after the last underscore
@@ -278,10 +296,15 @@ class Background extends BackgroundJobHandler {
 						if ( preg_match( '/_(\d+)$/', $request['data']['id'], $matches ) ) {
 							$product_id = (int) $matches[1];
 							if ( $product_id > 0 ) {
-								update_post_meta( $product_id, '_fb_sync_last_time', $current_time );
+								$product_ids[] = $product_id;
 							}
 						}
 					}
+				}
+
+				// Batch update all timestamps with a single database query
+				if ( ! empty( $product_ids ) ) {
+					$this->batch_update_sync_timestamps( $product_ids, $current_time );
 				}
 			} catch ( \Exception $e ) {
 				// Log the error but don't interrupt the sync process
@@ -302,13 +325,92 @@ class Background extends BackgroundJobHandler {
 	}
 
 	/**
-	 * Get current timestamp. Can be overridden in tests.
+	 * Batch update sync timestamps using a single database query for better performance.
 	 *
 	 * @since 3.5.5
 	 *
-	 * @return int Current timestamp.
+	 * @param array $product_ids Array of product IDs to update.
+	 * @param int   $timestamp   The timestamp to set.
 	 */
-	protected function get_current_timestamp(): int {
-		return time();
+	protected function batch_update_sync_timestamps( array $product_ids, int $timestamp ) {
+		global $wpdb;
+
+		if ( empty( $product_ids ) ) {
+			return;
+		}
+
+		// Sanitize product IDs
+		$product_ids = array_map( 'intval', $product_ids );
+		$product_ids = array_filter( $product_ids, function( $id ) {
+			return $id > 0;
+		} );
+
+		if ( empty( $product_ids ) ) {
+			return;
+		}
+
+		// Process in chunks to avoid hitting database limits
+		$chunk_size = 500; // Reasonable batch size to avoid max_allowed_packet issues
+		$product_chunks = array_chunk( $product_ids, $chunk_size );
+
+		foreach ( $product_chunks as $chunk ) {
+			$this->batch_update_chunk( $chunk, $timestamp );
+		}
+	}
+
+	/**
+	 * Updates a chunk of product timestamps.
+	 *
+	 * @since 3.5.5
+	 *
+	 * @param array $product_ids Array of product IDs to update (max 500).
+	 * @param int   $timestamp   The timestamp to set.
+	 */
+	private function batch_update_chunk( array $product_ids, int $timestamp ) {
+		global $wpdb;
+
+		$meta_key = '_fb_sync_last_time';
+
+		// Use INSERT ... ON DUPLICATE KEY UPDATE for better performance
+		// This handles both new meta entries and updates to existing ones
+		$values_placeholders = implode( ',', array_fill( 0, count( $product_ids ), '(%d, %s, %s)' ) );
+
+		$query_args = [];
+		foreach ( $product_ids as $product_id ) {
+			$query_args[] = $product_id;
+			$query_args[] = $meta_key;
+			$query_args[] = $timestamp;
+		}
+
+		$query = $wpdb->prepare(
+			"INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+			 VALUES {$values_placeholders}
+			 ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)",
+			...$query_args
+		);
+
+		$result = $wpdb->query( $query );
+
+		// Only clear cache if the query was successful
+		if ( false !== $result ) {
+			// Clear object cache for updated posts to ensure consistency
+			foreach ( $product_ids as $product_id ) {
+				wp_cache_delete( $product_id, 'post_meta' );
+			}
+		} else {
+			// Log database error if query failed
+			Logger::log(
+				'Database error during batch timestamp update',
+				[
+					'event' => 'batch_timestamp_update_db_error',
+					'error' => $wpdb->last_error,
+					'product_count' => count( $product_ids ),
+				],
+				[
+					'should_save_log_in_woocommerce' => true,
+					'woocommerce_log_level' => \WC_Log_Levels::ERROR,
+				]
+			);
+		}
 	}
 }
