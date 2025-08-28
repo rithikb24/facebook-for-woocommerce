@@ -230,6 +230,9 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 	/** @var WC_Facebookcommerce_Whatsapp_Utility_Event instance. */
 	private $wa_utility_event_processor;
 
+	/** @var array Static queue for batching last change time updates */
+	private static $last_change_time_queue = [];
+
 	/**
 	 * Init and hook in the integration.
 	 *
@@ -384,7 +387,8 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 		// Init Whatsapp Utility Event Processor
 		$this->wa_utility_event_processor = $this->load_whatsapp_utility_event_processor();
 		// Track programmatic changes that don't update post_modified
-		add_action( 'updated_post_meta', array( $this, 'update_last_change_time' ), 10, 4 );
+		add_action( 'updated_post_meta', array( $this, 'queue_last_change_time_update' ), 10, 4 );
+		add_action( 'shutdown', array( $this, 'process_last_change_time_queue' ) );
 	}
 
 	/**
@@ -2140,8 +2144,76 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 	}
 
 	/**
+	 * Queues a post for last change time update instead of updating immediately.
+	 *
+	 * @param int    $meta_id    ID of the metadata entry to update.
+	 * @param int    $product_id  Post ID.
+	 * @param string $meta_key   Meta key.
+	 * @param mixed  $meta_value Meta value.
+	 * @since 3.5.7
+	 */
+	public function queue_last_change_time_update( $meta_id, $product_id, $meta_key, $meta_value ) {
+		try {
+			// Only proceed if we should update the last change time
+			if ( $this->should_update_last_change_time( $product_id, $meta_key ) ) {
+				// Store the latest timestamp for this product in the queue
+				self::$last_change_time_queue[ $product_id ] = time();
+			}
+		} catch ( \Exception $e ) {
+			Logger::log(
+				'Error queuing last change time for product',
+				[
+					'event'      => 'queue_last_change_time_error',
+					'product_id' => $product_id,
+					'meta_key'   => $meta_key,
+					'meta_id'    => $meta_id,
+				],
+				[
+					'should_send_log_to_meta'        => false,
+					'should_save_log_in_woocommerce' => true,
+					'woocommerce_log_level'          => \WC_Log_Levels::ERROR,
+				],
+				$e
+			);
+		}
+	}
+
+	/**
+	 * Processes the queued last change time updates at shutdown.
+	 * This allows batching multiple metadata updates for the same product into a single DB call.
+	 *
+	 * @since 3.5.7
+	 */
+	public function process_last_change_time_queue() {
+		try {
+			// Process all queued products with their latest timestamps
+			foreach ( self::$last_change_time_queue as $product_id => $timestamp ) {
+				update_post_meta( $product_id, '_last_change_time', $timestamp );
+			}
+
+			// Clear the queue after processing
+			self::$last_change_time_queue = [];
+		} catch ( \Exception $e ) {
+			Logger::log(
+				'Error processing last change time queue',
+				[
+					'event'       => 'process_last_change_time_queue_error',
+					'queue_count' => count( self::$last_change_time_queue ),
+				],
+				[
+					'should_send_log_to_meta'        => false,
+					'should_save_log_in_woocommerce' => true,
+					'woocommerce_log_level'          => \WC_Log_Levels::ERROR,
+				],
+				$e
+			);
+		}
+	}
+
+	/**
 	 * Updates the _last_change_time meta field when wp_postmeta table is updated.
 	 *
+	 * @deprecated 3.5.7 Use queue_last_change_time_update() instead for better performance
 	 * @param int    $meta_id    ID of the metadata entry to update.
 	 * @param int    $product_id  Post ID.
 	 * @param string $meta_key   Meta key.
