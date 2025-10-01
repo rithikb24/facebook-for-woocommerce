@@ -351,7 +351,7 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 			if ( $this->is_configured() && $this->get_product_catalog_id() ) {
 
 				// On_product_save() must run with priority larger than 20 to make sure WooCommerce has a chance to save the submitted product information.
-				add_action( 'woocommerce_process_product_meta', [ $this, 'schedule_product_sync' ], 40 );
+				add_action( 'woocommerce_process_product_meta', [ $this, 'get_store_sync_transient' ], 40 );
 
 				add_action(
 					'woocommerce_product_quick_edit_save',
@@ -838,11 +838,11 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 	 *
 	 * @internal
 	 */
-	public function schedule_product_sync( int $wp_id ) {
+	public function get_store_sync_transient( int $wp_id ) {
 		// Store sync data in transient for async processing
 		// phpcs:disable WordPress.Security.NonceVerification.Missing
 		$sync_data = [
-			'product_id' => $wp_id,
+			'wp_id' => $wp_id,
 			'post_data' => $_POST,
 		];
 		// phpcs:enable WordPress.Security.NonceVerification.Missing
@@ -882,7 +882,7 @@ class WC_Facebookcommerce_Integration extends WC_Integration {
 				return; // Data expired or doesn't exist
 			}
 			delete_transient( $wp_id );
-			$wp_id = $sync_data['product_id'];
+			$wp_id = $sync_data['wp_id'];
 			$_POST = $sync_data['post_data']; // Restore $_POST data
 		}
 		$product = wc_get_product( $wp_id );
